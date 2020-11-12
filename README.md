@@ -1,6 +1,8 @@
 # binary-domaim
 Mod for Binary Domain aimed at improving mouse aiming
 
+https://www.youtube.com/watch?v=o4Qvk5thQ0Y
+
 Currently can be (at least) used to play through the entire campaign, **multiplayer is not tested**
 
 # Installation and usage
