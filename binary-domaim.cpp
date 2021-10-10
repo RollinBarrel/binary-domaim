@@ -248,7 +248,7 @@ LRESULT WINAPI WindProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
                 }
                 sensMod *= 0.10f * cfg->base;
                 x -= raw->data.mouse.lLastX * sensMod * (cfg->invertedX ? -1 : 1);
-                y -= raw->data.mouse.lLastY * sensMod * (cfg->invertedY ? -1 : 1) * 0.5625f;
+                y -= raw->data.mouse.lLastY * sensMod * (cfg->invertedY ? -1 : 1)/* * 0.5625f*/;
                 if (x != 0 || y != 0)
                     stickAffectsCamera = false;
             } else if (raw->header.dwType == RIM_TYPEKEYBOARD) {
