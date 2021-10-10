@@ -1,12 +1,18 @@
 ﻿
 #include <Windows.h>
 #include <windowsx.h>
+#include "config.h"
+
 uintptr_t mainModule;
 
+SensConfig* cfg;
 float x = 0;
 float y = 0;
-int sens = 50;
+bool holdADS = false;
+int ammoReplace = 0;
 int showFor = 0;
+char wepSelection = -1;
+int mouseScroll;
 
 uintptr_t routeReturn;
 void __declspec(naked) route() {
@@ -67,17 +73,79 @@ void __declspec(naked) howitzerToggle() {
     }
 }
 
+uintptr_t btnModReturn;
+void __declspec(naked) btnMod() {
+    _asm {
+        cmp byte ptr[wepSelection], -1
+        je og
+        or byte ptr[esi + 0x01], 0x10
+        cmp [wepSelection], 0
+        jne wep2
+        or byte ptr[esi + 0x05], 0x10
+        jmp og
+        wep2:
+        cmp [wepSelection], 1
+        jne wep3
+        or byte ptr[esi + 0x05], 0x20
+        jmp og
+        wep3:
+        cmp [wepSelection], 2
+        jne wep4
+        or byte ptr[esi + 0x05], 0x40
+        jmp og
+        wep4:
+        or byte ptr[esi + 0x05], 0x80
+        og:
+        and eax, dword ptr[ecx]
+        test dword ptr[esi + 04], eax
+        jmp [btnModReturn]
+    }
+}
+
+uintptr_t adsModReturn;
+void __declspec(naked) adsMod() {
+    _asm {
+        mov ecx, [cfg]
+        test [ecx + 0x10], 1 //cfg->toggleADS
+        je og
+        mov ecx, [esi]
+        and ecx, ~16
+        test [holdADS], 1
+        jne writeback
+        or ecx, 16
+        writeback:
+        mov [esi], ecx
+        og:
+        mov ecx, dword ptr[esi + 0x318]
+        jmp [adsModReturn]
+    }
+}
+
 uintptr_t showReturn;
 void __declspec(naked) show() {
     _asm {
         cmp [showFor], 0
         je og
         dec [showFor]
-        mov edx, [sens]
+        mov edx, [ammoReplace]
         og:
         mov [ebp + 0x18], edx
         mov edx, [esp + 0x28]
         jmp[showReturn]
+    }
+}
+
+uintptr_t wepDisplayReturn;
+void __declspec(naked) wepDisplay() {
+    _asm {
+        movzx ebp, byte ptr[wepSelection]
+        mov byte ptr[wepSelection], -1
+        cmp ebp, -1
+        je back
+        mov ebp, [esp + 0x10]
+        back:
+        cmp ebp, 4
+        jmp [wepDisplayReturn]
     }
 }
 
@@ -90,16 +158,38 @@ void hook(uintptr_t jump, void* func) {
     VirtualProtect((void*)jump, 6, oldProt, &oldProt);
 }
 
-HANDLE config;
-inline void updateConfig() {
-    DWORD a;
-    SetFilePointer(config, 0, NULL, FILE_BEGIN);
-    WriteFile(config, &sens, sizeof(sens), &a, NULL);
+int getADSState() {
+    int res = 0;
+    uintptr_t btn = *(uintptr_t*)(mainModule + 0xE68B84) + 0xF4;
+    if (btn != NULL) {
+        btn = *(uintptr_t*)btn;
+        if (btn != NULL && (*(int*)btn & 16) != 0) {
+            res |= 1;
+        }
+    }
+    static uintptr_t aimModePath[] = {0xC, 0x108, 0x0, 0x20, 0xB0, 0x10, 0xD00 + 0x14};
+    uintptr_t aimMode = mainModule + 0x2B9B8E4;
+    for (int i = 0; i < 7; ++i) {
+        if (aimMode < mainModule) {
+            aimMode = NULL;
+            break;
+        }
+        aimMode = *(uintptr_t*)aimMode;
+        aimMode += aimModePath[i];
+    }
+    if (aimMode != NULL) {
+        switch (*(int*)aimMode) {
+        case 3:
+            res |= 2;
+            break;
+        case 8:
+            res |= 4;
+            break;
+        }
+    }
+    return res;
 }
-inline void loadConfig() {
-    DWORD a;
-    ReadFile(config, &sens, sizeof(sens), &a, NULL);
-}
+
 
 WNDPROC ogProc;
 LRESULT WINAPI WindProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -114,52 +204,82 @@ LRESULT WINAPI WindProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
             RAWINPUT* raw = (RAWINPUT*)lpb;
 
             if (raw->header.dwType == RIM_TYPEMOUSE) {
+                if (raw->data.mouse.usButtonFlags & RI_MOUSE_RIGHT_BUTTON_DOWN && 
+                    cfg->toggleADS) 
+                    holdADS = !holdADS;
+                /*if (raw->data.mouse.usButtonFlags & RI_MOUSE_WHEEL) {
+                    signed char sel = (short)raw->data.mouse.usButtonData / WHEEL_DELTA;
+                    if (sel != 0) {
+                        uintptr_t wep = *(uintptr_t*)(mainModule + 0xEF9684) + 0x70;
+                        if (wep != NULL)
+                            wep = *(uintptr_t*)wep;
+                        uintptr_t btn = *(uintptr_t*)(mainModule + 0xE68B84) + 0xF4;
+                        uintptr_t anim = *(uintptr_t*)(mainModule + 0xEA8B84) + 0x64;
+                        if (wep != NULL && btn != NULL && anim != NULL) {
+                            wep = wep + 0x68;
+                            btn = *(uintptr_t*)btn + 0x1;
+                            anim = *(uintptr_t*)anim + 0x94;
+                            *(signed char*)(btn + 0x1) |= 0x10;
+                            static int wepOrder[] = {2, 0, 3, 1};
+                            static int wepIntOrder[] = {1, 2, 0, 3};
+                            if (wepSelection == -1) {
+                                signed char aa = *(char*)wep;
+                                signed char bb = wepIntOrder[aa];
+                                signed char cc = bb - sel;
+                                signed char dd = cc % 4;
+                                if (dd < 0)
+                                    dd = 4 + dd;
+                                wepSelection = wepOrder[dd];
+                            } else {
+                                wepSelection = wepOrder[(wepIntOrder[wepSelection] + sel) % 4];
+                            }
+                            if (*(char*)anim == 0x80)
+                                *(char*)anim = 0;
+                        }
+                        sel = 0;
+                    }
+                }*/
+                int ads = getADSState();
                 float sensMod = 1.f;
-
-                static uintptr_t aimModePath[] = {0xC, 0x108, 0x0, 0x20, 0xB0, 0x10, 0xD00 + 0x14};
-                uintptr_t aimMode = mainModule + 0x2B9B8E4;
-                for (int i = 0; i < 7; ++i) {
-                    if (aimMode < mainModule) {
-                        aimMode = NULL;
-                        break;
-                    }
-                    aimMode = *(uintptr_t*)aimMode;
-                    aimMode += aimModePath[i];
+                if (ads == (1 | 2)) {
+                    sensMod = cfg->ads * 0.01f;
+                } else if (ads == (1 | 4)) {
+                    sensMod = cfg->sniper * 0.01f;
                 }
-                uintptr_t butts = *(uintptr_t*)(mainModule + 0xEA4BA4) + 0x80;
-
-                if (butts != 0x17FFF81 && (*(int*)butts & 0b00010000) != 0 && aimMode != NULL) {
-                    switch (*(int*)aimMode) {
-                        case 3: {
-                            sensMod = 0.75f;
-                            break;
-                        }
-                        case 8: {
-                            sensMod = 0.33f;
-                            break;
-                        }
-                    }
-                }
-                sensMod *= 0.10f * sens;
-                x -= raw->data.mouse.lLastX * sensMod;
-                y -= raw->data.mouse.lLastY * sensMod * 0.5625f;
+                sensMod *= 0.10f * cfg->base;
+                x -= raw->data.mouse.lLastX * sensMod * (cfg->invertedX ? -1 : 1);
+                y -= raw->data.mouse.lLastY * sensMod * (cfg->invertedY ? -1 : 1) * 0.5625f;
                 if (x != 0 || y != 0)
                     stickAffectsCamera = false;
             } else if (raw->header.dwType == RIM_TYPEKEYBOARD) {
-                if (raw->data.keyboard.Flags == RI_KEY_BREAK) {
+                if (raw->data.keyboard.Flags == RI_KEY_MAKE) {
                     switch (raw->data.keyboard.VKey) {
                         case VK_OEM_PLUS:
                         case VK_ADD: {
-                            ++sens;
+                            int ads = getADSState();
+                            ammoReplace = ++cfg->base;
+                            /*if (ads & 2) {
+                                ammoReplace = ++cfg->ads;
+                            } else if (ads & 4) {
+                                ammoReplace = ++cfg->sniper;
+                            } else {
+                                ammoReplace = ++cfg->base;
+                            }*/
                             showFor = 180;
-                            updateConfig();
                             break;
                         }
                         case VK_OEM_MINUS:
                         case VK_SUBTRACT: {
-                            --sens;
+                            int ads = getADSState();
+                            ammoReplace = --cfg->base;
+                            /*if (ads & 2) {
+                                ammoReplace = --cfg->ads;
+                            } else if (ads & 4) {
+                                ammoReplace = --cfg->sniper;
+                            } else {
+                                ammoReplace = --cfg->base;
+                            }*/
                             showFor = 180;
-                            updateConfig();
                             break;
                         }
                     }
@@ -192,16 +312,7 @@ DWORD WINAPI Init(HMODULE hModule) {
     if (mainModule == NULL)
         return 0;
 
-    config = CreateFileA("./dom.aim", GENERIC_READ | GENERIC_WRITE, 0,
-                                NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (config == NULL)
-        return 1;
-    DWORD err = GetLastError();
-    if (err == 0) {
-        updateConfig();
-    } else if (err == ERROR_ALREADY_EXISTS) {
-        loadConfig();
-    }
+    cfg = initConfig();
 
     routeReturn = mainModule + 0xA3ADD3;
     hook(mainModule + 0xA3ADCD, &route);
@@ -215,8 +326,19 @@ DWORD WINAPI Init(HMODULE hModule) {
     howitzerToggleReturn = mainModule + 0xABDE07;
     hook(mainModule + 0xABDE01, &howitzerToggle);
 
+    btnModReturn = mainModule + 0x928680;
+    hook(mainModule + 0x92867B, &btnMod);
+
+    adsModReturn = mainModule + 0x92A5BB;
+    hook(mainModule + 0x92A5B5, &adsMod);
+
     showReturn = mainModule + 0x384807;
     hook(mainModule + 0x384800, &show);
+
+    /*wepDisplayReturn = mainModule + 0x3881CD;
+    hook(mainModule + 0x3881C6, &wepDisplay);*/
+        
+
 
     while (true) {
         UINT deviceCount = 0;
