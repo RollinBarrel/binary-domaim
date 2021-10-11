@@ -168,8 +168,8 @@ int getADSState() {
             res |= 1;
         }
     }
-    static uintptr_t aimModePath[] = {0xC, 0xF0, 0xE0, 0x8, 0x94, 0x20, 0xE24};
-    uintptr_t aimMode = mainModule + 0x02B9B9E4;
+    static uintptr_t aimModePath[] = {0xC, 0x100, 0x20, 0x8, 0x84, 0x70, 0xE10 + 0x14};
+    uintptr_t aimMode = mainModule + 0x0114BBE4;
     for (int i = 0; i < 7; ++i) {
         if (aimMode < mainModule) {
             aimMode = NULL;
