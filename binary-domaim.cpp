@@ -160,7 +160,8 @@ void hook(uintptr_t jump, void* func) {
 
 int getADSState() {
     int res = 0;
-    uintptr_t btn = *(uintptr_t*)(mainModule + 0xE68B84) + 0xF4;
+    uintptr_t btn = *(uintptr_t*)(mainModule + 0xE68B84);
+    if (btn != NULL) btn += 0xF4;
     if (btn != NULL) {
         btn = *(uintptr_t*)btn;
         if (btn != NULL && (*(int*)btn & 16) != 0) {
